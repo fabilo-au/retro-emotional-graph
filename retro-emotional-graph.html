@@ -825,6 +825,11 @@
     canvas.classList.remove("over-note", "over-line");
   });
 
+  // The mousedown that follows pointerdown would move focus off the editor's textarea.
+  canvas.addEventListener("mousedown", ev => {
+    if (editing) ev.preventDefault();
+  });
+
   function endDraw() {
     if (!drawing) return;
     drawing = false;
