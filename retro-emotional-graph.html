@@ -714,6 +714,7 @@
         emojiPicker = document.createElement("emoji-picker");
         emojiPicker.addEventListener("emoji-click", ev => {
           noteEmoji.value = ev.detail.unicode;
+          clearEmojiSearch();
           closeEmojiBrowser(true);
         });
         return emojiPicker;
@@ -721,6 +722,16 @@
       emojiPickerLoad.catch(() => { emojiPickerLoad = null; });   // allow a retry later
     }
     return emojiPickerLoad;
+  }
+
+  // The picker reads its search from the input event, so clearing the value alone
+  // would leave the old results showing next time it opens.
+  function clearEmojiSearch() {
+    const search = emojiPicker && emojiPicker.shadowRoot &&
+      emojiPicker.shadowRoot.querySelector("input[type=search]");
+    if (!search || !search.value) return;
+    search.value = "";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
   function openEmojiBrowser() {
