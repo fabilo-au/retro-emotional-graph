@@ -195,6 +195,33 @@
   .btn-quiet { border-color: var(--grid); color: var(--ink); }
   .btn-quiet:hover:not(:disabled) { background: var(--bg); color: var(--ink); }
   .note-editor .hint { margin: 8px 0 0; font-size: 0.8rem; color: var(--muted); }
+  .emoji-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; }
+  .emoji-row label { font-size: 0.85rem; font-weight: 600; margin-right: 2px; }
+  .emoji-row input {
+    width: 2.6em;
+    font: inherit;
+    font-size: 1.1rem;
+    text-align: center;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--grid);
+    border-radius: 8px;
+    padding: 2px 0;
+  }
+  .emoji-row input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+  .emoji-row .emoji-more { padding: 0 10px; height: 30px; font-size: 0.85rem; }
+  .emoji-row .emoji-more[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+  .emoji-browser { margin-top: 10px; }
+  .emoji-browser[hidden] { display: none; }
+  .emoji-browser emoji-picker {
+    width: 100%;
+    height: 300px;
+    --border-radius: 8px;
+    --num-columns: 7;
+    --emoji-size: 1.25rem;
+    --emoji-padding: 0.3rem;
+  }
+  .emoji-browser .hint { margin: 0; }
 
   /* Notes list */
   .notes { margin-top: 28px; }
@@ -224,7 +251,9 @@
     font-size: 0.8rem; font-weight: 700;
     background: var(--accent); color: var(--on-accent);
   }
-  .note-mood { flex: none; font-size: 1.1rem; line-height: 26px; }
+  .note-num.emoji { background: transparent; font-weight: 400; }
+  .note-num.emoji, .note-mood { font-size: 1.1rem; line-height: 26px; }
+  .note-mood { flex: none; }
   .note-text { white-space: pre-wrap; overflow-wrap: anywhere; padding-top: 2px; }
   @media (max-width: 520px) {
     .controls { width: 100%; justify-content: space-between; }
@@ -250,12 +279,21 @@
       <div class="note-editor" id="editor" hidden role="dialog" aria-labelledby="editorTitle">
         <h2 id="editorTitle">New note</h2>
         <textarea id="noteText" placeholder="What happened here?" aria-label="Note text"></textarea>
+        <div class="emoji-row">
+          <label for="noteEmoji">Marker</label>
+          <input id="noteEmoji" type="text" placeholder="#" autocomplete="off" spellcheck="false"
+                 aria-describedby="emojiHint">
+          <button type="button" class="btn-quiet emoji-more" id="emojiMore"
+                  aria-expanded="false" aria-controls="emojiBrowser">Browse…</button>
+        </div>
+        <div class="emoji-browser" id="emojiBrowser" hidden></div>
         <div class="note-actions">
           <button type="button" class="btn-primary" id="noteSave">Save note</button>
           <button type="button" class="btn-quiet" id="noteCancel">Cancel</button>
           <span class="spacer"></span>
           <button type="button" id="noteDelete">Delete note</button>
         </div>
+        <p class="hint" id="emojiHint">Browse or type an emoji to replace the marker number. Leave empty for a number.</p>
         <p class="hint">Ctrl + Enter saves, Esc cancels.</p>
       </div>
     </div>
@@ -279,7 +317,10 @@
   const STORE_KEY = "retro-mood-graph-v1";
   const PAD = { left: 56, right: 18, top: 20, bottom: 20 };
   const MARKER_R = 11;
+  const EMOJI_R = 14;                  // emoji markers are larger than numbered ones
   const LINE_HIT = 22;                 // px distance that counts as clicking the line
+  // Full searchable emoji picker, loaded from the CDN only when first opened.
+  const EMOJI_PICKER_SRC = "https://cdn.jsdelivr.net/npm/emoji-picker-element@1.29.1/index.js";
   const FACES = [
     { v: 1,    e: "😄" },
     { v: 0.5,  e: "🙂" },
@@ -301,6 +342,9 @@
   const editor = $("editor");
   const editorTitle = $("editorTitle");
   const noteText = $("noteText");
+  const noteEmoji = $("noteEmoji");
+  const emojiMore = $("emojiMore");
+  const emojiBrowser = $("emojiBrowser");
   const noteSave = $("noteSave");
   const noteCancel = $("noteCancel");
   const noteDelete = $("noteDelete");
@@ -308,7 +352,7 @@
   const notesList = $("notesList");
 
   let values = new Array(N).fill(null);   // each entry: null or -1..1
-  let notes = [];                          // [{id, i, text}]
+  let notes = [];                          // [{id, i, text, emoji?}]
   let drawing = false;
   let last = null;
   let W = 0, H = 0;
@@ -360,12 +404,26 @@
   // Where a note sits: on the line if there is one at that point, else on neutral.
   const noteValue = n => (values[n.i] === null ? 0 : values[n.i]);
   const sortedNotes = () => notes.slice().sort((a, b) => a.i - b.i);
+  const markerEmoji = n => (typeof n.emoji === "string" ? n.emoji : "");
+  const markerR = n => (n && markerEmoji(n) ? EMOJI_R : MARKER_R);
+
+  // Single user-perceived character, so flags and ZWJ emoji stay whole.
+  function lastGrapheme(str) {
+    const s = str.trim();
+    if (!s) return "";
+    if (window.Intl && Intl.Segmenter) {
+      const parts = Array.from(new Intl.Segmenter().segment(s), x => x.segment);
+      return parts[parts.length - 1];
+    }
+    const chars = Array.from(s);
+    return chars[chars.length - 1];
+  }
 
   function noteAt(p) {
     let best = null, bestD = Infinity;
     notes.forEach(n => {
       const d = Math.hypot(p.x - xOf(n.i), p.y - yOf(noteValue(n)));
-      if (d <= MARKER_R + 4 && d < bestD) { best = n; bestD = d; }
+      if (d <= markerR(n) + 4 && d < bestD) { best = n; bestD = d; }
     });
     return best;
   }
@@ -508,10 +566,22 @@
       ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
     }
 
-    // Note markers, numbered left to right
-    ctx.font = "700 12px 'Bricolage Grotesque', system-ui, sans-serif";
+    // Note markers, numbered left to right unless the note has its own emoji
+    const numFont = "700 12px 'Bricolage Grotesque', system-ui, sans-serif";
+    const emojiFont = "25px system-ui, 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
     sortedNotes().forEach((n, idx) => {
       const x = xOf(n.i), y = yOf(noteValue(n));
+      const emoji = markerEmoji(n);
+      if (emoji) {
+        if (editing && editing.id === n.id) {
+          ctx.beginPath();
+          ctx.arc(x, y, EMOJI_R + 2.5, 0, Math.PI * 2);
+          ctx.lineWidth = 2; ctx.strokeStyle = c.accent; ctx.stroke();
+        }
+        ctx.font = emojiFont;
+        ctx.fillText(emoji, x, y + 1);
+        return;
+      }
       ctx.beginPath();
       ctx.arc(x, y, MARKER_R + 2.5, 0, Math.PI * 2);
       ctx.fillStyle = c.surface; ctx.fill();
@@ -521,6 +591,7 @@
       if (editing && editing.id === n.id) {
         ctx.lineWidth = 2; ctx.strokeStyle = c.line; ctx.stroke();
       }
+      ctx.font = numFont;
       ctx.fillStyle = c.onAccent;
       ctx.fillText(String(idx + 1), x, y + 0.5);
     });
@@ -546,8 +617,9 @@
       btn.title = lockBox.checked ? "Edit this note" : "Lock the graph to edit notes";
 
       const num = document.createElement("span");
-      num.className = "note-num";
-      num.textContent = String(idx + 1);
+      const emoji = markerEmoji(n);
+      num.className = emoji ? "note-num emoji" : "note-num";
+      num.textContent = emoji || String(idx + 1);
       const mood = document.createElement("span");
       mood.className = "note-mood";
       mood.textContent = moodEmoji(noteValue(n));
@@ -570,8 +642,9 @@
     const ew = editor.offsetWidth, eh = editor.offsetHeight;
     let left = x - ew / 2;
     left = Math.max(8, Math.min(W - ew - 8, left));
-    let top = y + MARKER_R + 12;                       // below the point…
-    if (top + eh > H - 8) top = y - MARKER_R - 12 - eh; // …or above if no room
+    const r = markerR(editing.id ? notes.find(n => n.id === editing.id) : null);
+    let top = y + r + 12;                       // below the point…
+    if (top + eh > H - 8) top = y - r - 12 - eh; // …or above if no room
     top = Math.max(8, top);
     editor.style.left = left + "px";
     editor.style.top = top + "px";
@@ -582,6 +655,7 @@
     editing = { id: existing ? existing.id : null, i };
     editorTitle.textContent = existing ? "Edit note" : "New note";
     noteText.value = existing ? existing.text : "";
+    noteEmoji.value = existing ? markerEmoji(existing) : "";
     noteDelete.hidden = !existing;
     editor.hidden = false;
     positionEditor();
@@ -591,19 +665,24 @@
 
   function closeEditor() {
     editing = null;
+    closeEmojiBrowser();
     editor.hidden = true;
     render();
   }
 
-  function commitEditor() {
+  // Text is optional. An explicit save always keeps the point; clicking away only
+  // creates a new one if something was entered, so stray clicks don't leave markers.
+  function commitEditor(explicit) {
     if (!editing) return;
     const text = noteText.value.trim();
+    const emoji = lastGrapheme(noteEmoji.value);
     if (editing.id) {
       const n = notes.find(n => n.id === editing.id);
-      if (n && text) n.text = text;
-      else if (n && !text) notes = notes.filter(x => x !== n);
-    } else if (text) {
-      notes.push({ id: "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), i: editing.i, text });
+      if (n) { n.text = text; setEmoji(n, emoji); }
+    } else if (explicit === true || text || emoji) {
+      const n = { id: "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), i: editing.i, text };
+      setEmoji(n, emoji);
+      notes.push(n);
     }
     save();
     closeEditor();
@@ -617,12 +696,73 @@
     updateUI();
   }
 
-  noteSave.addEventListener("click", commitEditor);
+  noteSave.addEventListener("click", () => commitEditor(true));
   noteCancel.addEventListener("click", closeEditor);
   noteDelete.addEventListener("click", deleteEditingNote);
-  noteText.addEventListener("keydown", ev => {
+  function setEmoji(n, emoji) {
+    if (emoji) n.emoji = emoji; else delete n.emoji;
+  }
+
+  emojiMore.addEventListener("click", () => {
+    if (emojiBrowser.hidden) openEmojiBrowser(); else closeEmojiBrowser(true);
+  });
+
+  let emojiPicker = null;
+  let emojiPickerLoad = null;
+
+  function loadEmojiPicker() {
+    if (!emojiPickerLoad) {
+      emojiPickerLoad = import(EMOJI_PICKER_SRC).then(() => {
+        emojiPicker = document.createElement("emoji-picker");
+        emojiPicker.addEventListener("emoji-click", ev => {
+          noteEmoji.value = ev.detail.unicode;
+          closeEmojiBrowser(true);
+        });
+        return emojiPicker;
+      });
+      emojiPickerLoad.catch(() => { emojiPickerLoad = null; });   // allow a retry later
+    }
+    return emojiPickerLoad;
+  }
+
+  function openEmojiBrowser() {
+    emojiBrowser.hidden = false;
+    emojiMore.setAttribute("aria-expanded", "true");
+    if (!emojiPicker) emojiBrowser.innerHTML = '<p class="hint">Loading emoji…</p>';
+    positionEditor();
+    loadEmojiPicker().then(picker => {
+      if (emojiBrowser.hidden) return;
+      const dark = getComputedStyle(document.documentElement).colorScheme === "dark";
+      picker.classList.toggle("dark", dark);
+      picker.classList.toggle("light", !dark);
+      emojiBrowser.replaceChildren(picker);
+      positionEditor();
+      const search = picker.shadowRoot && picker.shadowRoot.querySelector("input[type=search]");
+      if (search) search.focus();
+    }, () => {
+      if (emojiBrowser.hidden) return;
+      emojiBrowser.innerHTML = '<p class="hint">Couldn’t load the emoji list. You can still type or paste one.</p>';
+      positionEditor();
+    });
+  }
+
+  function closeEmojiBrowser(returnFocus) {
+    if (emojiBrowser.hidden) return;
+    emojiBrowser.hidden = true;
+    emojiMore.setAttribute("aria-expanded", "false");
+    if (editing) positionEditor();
+    if (returnFocus) noteEmoji.focus();
+  }
+
+  // Keep the field to one emoji: whatever was typed or picked last wins.
+  noteEmoji.addEventListener("input", () => {
+    noteEmoji.value = lastGrapheme(noteEmoji.value);
+  });
+
+  editor.addEventListener("keydown", ev => {
+    if (ev.key === "Escape" && !emojiBrowser.hidden) { ev.preventDefault(); closeEmojiBrowser(true); return; }
     if (ev.key === "Escape") { ev.preventDefault(); closeEditor(); }
-    if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); commitEditor(); }
+    if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); commitEditor(true); }
   });
 
   // ---------- UI state ----------
@@ -635,7 +775,7 @@
     clearBtn.textContent = notes.length ? "Delete line and notes" : "Delete line";
     if (locked) {
       statusEl.textContent = hasLine()
-        ? "Locked. Click anywhere on the line to add a note, or click a numbered marker to edit it."
+        ? "Locked. Click anywhere on the line to add a note, or click a marker to edit it."
         : "Locked. Drawing and deleting are turned off.";
     } else {
       statusEl.textContent = hasLine()
