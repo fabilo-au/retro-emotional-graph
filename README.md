@@ -11,6 +11,7 @@ There is no build step, no server and nothing to install. Everything lives in `r
 - **Lock graph:** A checkbox that stops drawing and disables deletion, so the line can't be wiped by accident.
 - **Delete line:** Clears the line (and any notes). It only works while the graph is unlocked.
 - **Notes:** While the graph is locked, click the line to add a note at that point. Notes appear as numbered markers along the line and in a "Talking points" list under the chart, in timeline order. Click a marker or list item to edit or delete a note.
+- **Timeline sections:** The cog button next to **Delete line** opens a settings menu where you set how many evenly spaced sections the timeline is split into (1–50). Dotted vertical dividers mark the boundaries, so 10 sections show 9 dividers. The default is 1 section (no dividers).
 - **Editable labels:** The title and the start and end labels can be renamed in place.
 - **Saved in the browser:** The line, notes, labels and lock state are kept in `localStorage`, so a refresh doesn't lose anything.
 - **Works on touch devices** and follows the system light or dark mode.
@@ -60,6 +61,7 @@ State is saved under the `localStorage` key `retro-mood-graph-v1` as JSON:
 {
   "values": [null, 0.42, ...],
   "notes": [{ "id": "n...", "i": 120, "text": "Release went out" }],
+  "sections": 1,
   "locked": true,
   "title": "Sprint retro",
   "start": "Sprint start",
@@ -82,8 +84,9 @@ The script is one self-contained function, organised into commented sections:
 | `note editor` | Opening, positioning, saving and deleting notes |
 | `UI state` | Button states, cursor styles and status text |
 | `canvas events` | Pointer handling for drawing and for clicking on the line |
+| `settings menu` | The cog menu for setting the number of timeline sections |
 
-Useful constants at the top of the script include `N` (line resolution), `PAD` (chart padding), `FACES` (y-axis faces and their values), `MARKER_R` (note marker size) and `LINE_HIT` (how close a click needs to be to count as clicking the line).
+Useful constants at the top of the script include `N` (line resolution), `PAD` (chart padding), `FACES` (y-axis faces and their values), `MARKER_R` (note marker size) and `LINE_HIT` (how close a click needs to be to count as clicking the line) and `MAX_SECTIONS` (the upper limit for timeline sections).
 
 ## Contributing
 
@@ -94,6 +97,7 @@ Contributions are welcome. To keep the project easy to pick up and host anywhere
   - Drawing, partial redraws, locking and deleting still work.
   - Adding, editing and deleting notes still works, and notes stay attached to the line after a redraw.
   - The page still works after a refresh (saved state loads correctly).
+  - Changing the number of sections in the cog menu redraws the dividers and survives a refresh.
   - Both light and dark mode look right.
   - It works on a narrow screen and with touch, if you can test that.
 - **Keep the controls keyboard-accessible** with visible focus styles.
