@@ -99,7 +99,7 @@
   }
   .title:hover { border-bottom-color: var(--grid); }
   .title:focus { outline: none; border-bottom-color: var(--accent); }
-  .controls { display: flex; align-items: center; gap: 12px; }
+  .controls { position: relative; display: flex; align-items: center; gap: 12px; }
   .lock {
     display: inline-flex;
     align-items: center;
@@ -223,6 +223,42 @@
   }
   .emoji-browser .hint { margin: 0; }
 
+  /* Settings menu */
+  .btn-icon {
+    display: inline-grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+  }
+  .btn-icon svg { width: 20px; height: 20px; }
+  .btn-icon[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+  .settings-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: 240px;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 14px;
+    padding: 12px;
+    box-shadow: 0 10px 30px var(--shadow);
+    z-index: 10;
+  }
+  .settings-menu[hidden] { display: none; }
+  .settings-menu label { display: block; font-weight: 600; margin-bottom: 6px; }
+  .settings-menu input {
+    width: 100%;
+    font: inherit;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--grid);
+    border-radius: 8px;
+    padding: 6px 10px;
+  }
+  .settings-menu input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+  .settings-menu .hint { margin: 8px 0 0; font-size: 0.8rem; color: var(--muted); }
+
   /* Notes list */
   .notes { margin-top: 28px; }
   .notes[hidden] { display: none; }
@@ -270,6 +306,18 @@
         Lock graph
       </label>
       <button type="button" id="clear">Delete line</button>
+      <button type="button" class="btn-quiet btn-icon" id="settingsBtn" aria-label="Settings" title="Settings"
+              aria-haspopup="true" aria-expanded="false" aria-controls="settingsMenu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+      <div class="settings-menu" id="settingsMenu" hidden role="dialog" aria-label="Settings">
+        <label for="sectionsInput">Number of sections</label>
+        <input type="number" id="sectionsInput" min="1" max="50" step="1" value="1" inputmode="numeric">
+        <p class="hint">Splits the timeline into evenly spaced sections (1–50).</p>
+      </div>
     </div>
   </div>
 
@@ -319,6 +367,7 @@
   const LINE_HIT = 22;                 // px distance that counts as clicking the line
   // Full searchable emoji picker, loaded from the CDN only when first opened.
   const EMOJI_PICKER_SRC = "https://cdn.jsdelivr.net/npm/emoji-picker-element@1.29.1/index.js";
+  const MAX_SECTIONS = 50;             // upper limit for vertical sections
   const FACES = [
     { v: 1,    e: "😄" },
     { v: 0.5,  e: "🙂" },
@@ -348,6 +397,9 @@
   const noteDelete = $("noteDelete");
   const notesSection = $("notesSection");
   const notesList = $("notesList");
+  const settingsBtn = $("settingsBtn");
+  const settingsMenu = $("settingsMenu");
+  const sectionsInput = $("sectionsInput");
 
   let values = new Array(N).fill(null);   // each entry: null or -1..1
   let notes = [];                          // [{id, i, text, emoji?}]
@@ -355,12 +407,13 @@
   let last = null;
   let W = 0, H = 0;
   let editing = null;                      // {id|null, i}
+  let sections = 1;                        // evenly spaced timeline sections (sections - 1 dividers)
 
   // ---------- persistence ----------
   function save() {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify({
-        values, notes, locked: lockBox.checked,
+        values, notes, sections, locked: lockBox.checked,
         title: titleEl.value, start: startEl.value, end: endEl.value
       }));
     } catch (e) { /* storage unavailable: keep working in memory */ }
@@ -374,11 +427,15 @@
       if (Array.isArray(d.notes)) {
         notes = d.notes.filter(n => n && Number.isInteger(n.i) && typeof n.text === "string");
       }
+      if (isValidSections(d.sections)) sections = d.sections;
       lockBox.checked = !!d.locked;
       if (typeof d.title === "string") titleEl.value = d.title;
       if (typeof d.start === "string") startEl.value = d.start;
       if (typeof d.end === "string") endEl.value = d.end;
     } catch (e) { /* ignore bad or missing data */ }
+  }
+  function isValidSections(n) {
+    return Number.isInteger(n) && n >= 1 && n <= MAX_SECTIONS;
   }
 
   // ---------- geometry ----------
@@ -505,6 +562,18 @@
       else { ctx.strokeStyle = c.grid; ctx.lineWidth = 1; ctx.setLineDash([4, 6]); }
       ctx.stroke();
     });
+
+    // Vertical section dividers
+    ctx.strokeStyle = c.grid;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 6]);
+    for (let k = 1; k < sections; k++) {
+      const x = Math.round(PAD.left + (k / sections) * plotW()) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x, PAD.top);
+      ctx.lineTo(x, H - PAD.bottom);
+      ctx.stroke();
+    }
     ctx.setLineDash([]);
 
     const segs = runs();
@@ -869,6 +938,50 @@
   });
 
   [titleEl, startEl, endEl].forEach(el => el.addEventListener("input", save));
+
+  // ---------- settings menu ----------
+  function openSettings() {
+    sectionsInput.value = String(sections);
+    settingsMenu.hidden = false;
+    settingsBtn.setAttribute("aria-expanded", "true");
+    sectionsInput.focus();
+    sectionsInput.select();
+  }
+  function closeSettings(returnFocus) {
+    if (settingsMenu.hidden) return;
+    settingsMenu.hidden = true;
+    settingsBtn.setAttribute("aria-expanded", "false");
+    sectionsInput.value = String(sections);   // drop any invalid half-typed value
+    if (returnFocus) settingsBtn.focus();
+  }
+
+  settingsBtn.addEventListener("click", () => {
+    if (settingsMenu.hidden) openSettings(); else closeSettings(true);
+  });
+
+  // Apply valid values as they're typed; invalid ones are ignored until fixed.
+  sectionsInput.addEventListener("input", () => {
+    const n = Number(sectionsInput.value);
+    if (!isValidSections(n) || n === sections) return;
+    sections = n;
+    save();
+    render();
+  });
+  sectionsInput.addEventListener("change", () => { sectionsInput.value = String(sections); });
+  sectionsInput.addEventListener("keydown", ev => {
+    if (ev.key === "Enter" || ev.key === "Escape") { ev.preventDefault(); closeSettings(true); }
+  });
+
+  document.addEventListener("pointerdown", ev => {
+    if (!settingsMenu.hidden && !settingsMenu.contains(ev.target) && !settingsBtn.contains(ev.target)) {
+      closeSettings(false);
+    }
+  });
+  settingsMenu.addEventListener("focusout", ev => {
+    if (ev.relatedTarget && !settingsMenu.contains(ev.relatedTarget) && ev.relatedTarget !== settingsBtn) {
+      closeSettings(false);
+    }
+  });
 
   new ResizeObserver(resize).observe(wrap);
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
